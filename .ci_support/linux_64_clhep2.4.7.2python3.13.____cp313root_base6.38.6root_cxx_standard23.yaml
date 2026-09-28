@@ -41,7 +41,5 @@ xerces_c:
 zip_keys:
 - - root_base
   - root_cxx_standard
-zlib:
-- '1'
 zstd:
 - '1.5'
