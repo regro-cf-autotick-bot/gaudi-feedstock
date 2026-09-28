@@ -24,6 +24,7 @@ build:
     - match(python, "<3.13")
   script:
     - |
+      # Gaudi requires relative GAUDI_INSTALL_* paths (gaudi/Gaudi#395)
       cmake ${CMAKE_ARGS} \
           -GNinja \
           -DCMAKE_BUILD_TYPE=Release \
@@ -31,7 +32,7 @@ build:
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
           -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
           -DBUILD_SHARED_LIBS=ON \
-          -DGAUDI_INSTALL_PYTHONDIR=$SP_DIR \
+          -DGAUDI_INSTALL_PYTHONDIR=${SP_DIR#$PREFIX/} \
           -DPython_EXECUTABLE=$PYTHON \
           -DGAUDI_USE_DOXYGEN=OFF \
           -S $SRC_DIR \
