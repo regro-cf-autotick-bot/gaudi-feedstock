@@ -32,7 +32,6 @@ build:
           -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
           -DBUILD_SHARED_LIBS=ON \
           -DGAUDI_INSTALL_PYTHONDIR=$SP_DIR \
-          -DGAUDI_DEFAULT_PLUGIN_PATH=$PREFIX/lib \
           -DPython_EXECUTABLE=$PYTHON \
           -DGAUDI_USE_DOXYGEN=OFF \
           -S $SRC_DIR \
@@ -75,7 +74,6 @@ requirements:
     - root_base
     - root_cxx_standard
     - tbb-devel
-    - zlib
     - zstd
     - libuuid
     - range-v3
