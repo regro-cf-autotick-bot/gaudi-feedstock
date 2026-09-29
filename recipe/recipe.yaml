@@ -104,17 +104,19 @@ requirements:
   run:
     - python
     - libpython
+    # cling re-parses Gaudi's public headers whenever cppyy builds a class
+    # proxy, and several of them include Boost, so the headers have to be
+    # present at runtime or `import GaudiPython` segfaults inside cling
+    - libboost-headers
 
 tests:
   - python:
       imports:
         - GaudiKernel
         - GaudiConfig2
-      # GaudiPython is deliberately absent: importing it segfaults, because
-      # resolving cppyy.gbl.DataObject dlopens libGaudiKernel.so, which links
-      # libpython, and conda-forge's python has CPython linked statically - so
-      # a second interpreter lands in the process. Pre-existing, reproduces on
-      # released 40.6, tracked separately.
+        # exercises cppyy: the import resolves cppyy.gbl.DataObject, which is
+        # what needs Boost's headers at runtime
+        - GaudiPython
       pip_check: true
   - package_contents:
       strict: true
