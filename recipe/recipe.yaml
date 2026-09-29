@@ -50,7 +50,6 @@ build:
     # bytecode next to it - inside $PREFIX, where it would be packaged as ours
     - rm -rf "$SP_DIR"/pytest_cov/__pycache__
     - cmake --install build
-    - root -l -b -q -e 'if (TClass::GetClass("DataObject") == nullptr) { std::cerr << "Failed to load DataObject" << std::endl; return 1; } return 0;'
 
 requirements:
   run_exports:
@@ -107,15 +106,46 @@ tests:
   - python:
       imports:
         - GaudiKernel
-      # Gaudi does not currently install Python package metadata, so pip_check
-      # would fail
-      pip_check: false
+        - GaudiConfig2
+        - GaudiPython
+      pip_check: true
   - package_contents:
+      strict: true
       bin:
         - Gaudi
+      lib:
+        - GaudiKernel
+        - GaudiPluginService
+      files:
+        - bin/**
+        - include/**
+        - jobOptions/**
+        - share/PDGTABLE*
+        - lib/*.so
+        - lib/*.rootmap
+        - lib/*_rdict.pcm
+        - lib/modules.timestamp
+        - lib/cmake/**
+        - lib/gaudi-plugins/**
+        # Listed per top-level package rather than as site-packages/** so that
+        # bytecode a host dependency leaves behind fails the build instead of
+        # being packaged as ours
+        - lib/python*/site-packages/Gaudi*/**
+        - lib/python*/site-packages/RootCnv/**
+        - lib/python*/site-packages/RootHistCnv/**
+        - lib/python*/site-packages/PartPropSvc/**
+        - lib/python*/site-packages/TinyExperiment/**
+        - lib/python*/site-packages/Configurables.py
+        - lib/python*/site-packages/__pycache__/*
   - script:
-      - Gaudi --help
-      - gaudirun.py
+      # Configure and run a real job: this resolves the ApplicationMgr factory
+      # through the plugin service, so it proves the .components files under
+      # lib/gaudi-plugins are found with no environment variable set.
+      - gaudirun.py --option="from Gaudi.Configuration import ApplicationMgr" --option="ApplicationMgr(EvtMax=5, EvtSel='NONE')" 2>&1 | tee run.log
+      - grep -q "Application Manager Terminated successfully" run.log
+      # Loading a Gaudi class through ROOT exercises the dictionaries and the
+      # rootmap, which install next to the libraries rather than with the plugins
+      - root -l -b -q -e 'if (TClass::GetClass("DataObject") == nullptr) { std::cerr << "Failed to load DataObject" << std::endl; return 1; } return 0;'
 
 about:
   homepage: https://gitlab.cern.ch/gaudi/Gaudi
