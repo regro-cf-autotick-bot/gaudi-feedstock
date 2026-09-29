@@ -22,6 +22,9 @@ build:
     - osx
     # conda-forge Python lacks gdbm support, so dbm.sqlite3 (Python 3.13+) is needed for confdb2
     - match(python, "<3.13")
+  dynamic_linking:
+    overlinking_behavior: error
+    overdepending_behavior: error
   script:
     - |
       # Gaudi requires relative GAUDI_INSTALL_* paths (gaudi/Gaudi#395)
@@ -49,6 +52,10 @@ build:
 requirements:
   run_exports:
     - ${{ pin_subpackage("gaudi", upper_bound="x.x.x") }}
+  # catch2 only builds Gaudi's own unit tests; nothing shipped links it
+  ignore_run_exports:
+    by_name:
+      - catch2
   build:
     - ${{ compiler('cxx') }}
     - ${{ stdlib('c') }}
@@ -65,6 +72,9 @@ requirements:
     # Gaudi's ctest suite drives pytest, so these are needed for the
     # build-time test run
     - python
+    # Gaudi embeds CPython, so GaudiKernel and the Python plugins link
+    # libpython directly; conda-forge's python package no longer provides it
+    - libpython
     - pytest
     - pytest-cov
     - coverage
@@ -88,6 +98,7 @@ requirements:
     - heppdt
   run:
     - python
+    - libpython
 
 tests:
   - python:
