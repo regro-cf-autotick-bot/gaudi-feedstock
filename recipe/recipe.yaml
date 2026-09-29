@@ -46,6 +46,9 @@ build:
     # development dependencies not available in test install environmet
     # Gaudi tests are flaky on resource constrained environments to retry up to three times
     - ctest --output-on-failure -E 'cmake\.test_dummyGaudiDownstreamProject' --repeat until-pass:3 -j${CPU_COUNT} --test-dir build
+    # ctest imports pytest-cov from the host env, and CPython caches its
+    # bytecode next to it - inside $PREFIX, where it would be packaged as ours
+    - rm -rf "$SP_DIR"/pytest_cov/__pycache__
     - cmake --install build
     - root -l -b -q -e 'if (TClass::GetClass("DataObject") == nullptr) { std::cerr << "Failed to load DataObject" << std::endl; return 1; } return 0;'
 
