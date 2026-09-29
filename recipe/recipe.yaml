@@ -110,7 +110,11 @@ tests:
       imports:
         - GaudiKernel
         - GaudiConfig2
-        - GaudiPython
+      # GaudiPython is deliberately absent: importing it segfaults, because
+      # resolving cppyy.gbl.DataObject dlopens libGaudiKernel.so, which links
+      # libpython, and conda-forge's python has CPython linked statically - so
+      # a second interpreter lands in the process. Pre-existing, reproduces on
+      # released 40.6, tracked separately.
       pip_check: true
   - package_contents:
       strict: true
