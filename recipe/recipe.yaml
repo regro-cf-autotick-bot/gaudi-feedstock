@@ -46,9 +46,12 @@ build:
     # development dependencies not available in test install environmet
     # Gaudi tests are flaky on resource constrained environments to retry up to three times
     - ctest --output-on-failure -E 'cmake\.test_dummyGaudiDownstreamProject' --repeat until-pass:3 -j${CPU_COUNT} --test-dir build
-    # ctest imports pytest-cov from the host env, and CPython caches its
-    # bytecode next to it - inside $PREFIX, where it would be packaged as ours
+    # Both of these are host-environment files the build writes into $PREFIX,
+    # where they would be packaged as ours: CPython caches pytest-cov's
+    # bytecode next to the host copy, and ROOT stamps lib/modules.timestamp
+    # when rootcling regenerates its module cache
     - rm -rf "$SP_DIR"/pytest_cov/__pycache__
+    - rm -f "$PREFIX/lib/modules.timestamp"
     - cmake --install build
 
 requirements:
@@ -124,7 +127,6 @@ tests:
         - lib/*.so
         - lib/*.rootmap
         - lib/*_rdict.pcm
-        - lib/modules.timestamp
         - lib/cmake/**
         - lib/gaudi-plugins/**
         # Listed per top-level package rather than as site-packages/** so that
