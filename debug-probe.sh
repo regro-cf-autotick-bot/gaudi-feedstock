@@ -83,6 +83,11 @@ if [ "$interesting" = yes ]; then
     # coincided with one of these runners in ~300 samples, so overriding beats
     # waiting for the matrix to pair them.
     echo "config=linux_64_clhep2.4.4.0python3.13.____cp313root_base6.36.14root_cxx_standard20" >> "${GITHUB_OUTPUT:-/dev/null}"
+    # Falsifiable test of the derivation theory, before the build. Predicts
+    # 6.36 warns on every invocation and 6.40 on none, and that llvmdev 18
+    # derives 256=1/512=0 where llvmdev 20 derives 0/0. Any intermittency on a
+    # fixed build and CPU would falsify the register-allocation mechanism.
+    N=10 OUT=avx10-artifacts bash avx10/falsify.sh || echo "falsify returned non-zero"
     echo "  -> building Gaudi with root_base 6.36.14 and running the full suite here"
     exit 0
 fi
