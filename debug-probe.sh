@@ -30,7 +30,25 @@ arch=$(pixi exec --spec archspec archspec cpu 2>/dev/null || echo unknown)
 echo "### CPU"
 echo "model:    ${model}"
 echo "archspec: ${arch}"
-echo "(no avx10 in /proc/cpuinfo is expected - the LLVM bug mis-reads CPUID)"
+
+# The decisive measurement. A Granite Rapids runner swept clang 18.1.8, 20.1.8
+# and 20.1.8 clean, so the CPU model is not the discriminator: real GNR reports
+# leaf 0x24 EBX bit 18 set, which makes both avx10 features come out true even
+# pre-fix. The warning needs version >= 1 with bit 18 clear, which real silicon
+# does not do - so this dumps the raw registers to test whether the affected
+# runners are virtualised behind an incomplete leaf 0x24. Unlike a reproduction
+# attempt this is informative on every runner, warning or not.
+echo
+echo "### CPUID (what LLVM getHostCPUFeatures reads)"
+would_warn=0
+if gcc -O0 -o /tmp/cpuid-probe cpuid-probe.c 2>/dev/null; then
+    /tmp/cpuid-probe | tee /tmp/cpuid.txt
+    would_warn=$(sed -n 's/.*would_warn=\([01]\).*/\1/p' /tmp/cpuid.txt | tail -1)
+    would_warn=${would_warn:-0}
+else
+    echo "  (failed to compile cpuid-probe.c)"
+fi
+echo "CPUIDVERDICT cpu=${model} arch=${arch} $(grep -h '^VERDICT' /tmp/cpuid.txt 2>/dev/null | sed 's/^VERDICT //')"
 
 # NB the dash goes last in the tr set, otherwise it reads as a character range
 cxx=$(grep -A1 '^root_cxx_standard:' ".ci_support/${CONFIG}.yaml" | tail -1 | tr -d " '\"-")
@@ -81,9 +99,9 @@ done
 
 echo "$row" >> "$summary"
 
-if [ "$reproduced" = yes ]; then
-    echo "REPRODUCED on ${model}"
+if [ "$reproduced" = yes ] || [ "$would_warn" = 1 ]; then
+    echo "FOUND IT on ${model} (root_base hit=${reproduced}, cpuid would_warn=${would_warn})"
     exit 0
 fi
-echo "Not reproduced on ${model} for any root_base - failing so a rerun re-rolls the runner."
+echo "Nothing interesting on ${model} - failing so a rerun re-rolls the runner."
 exit 1
