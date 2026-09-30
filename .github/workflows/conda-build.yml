@@ -754,6 +754,30 @@ jobs:
           docker run --rm --privileged multiarch/qemu-user-static:register --reset --credential yes
         fi
 
+    # >>> TEMPORARY DEBUG for root-project/root#23542 - revert before merging.
+    # These steps are hand-added to conda-smithy generated output and will be
+    # wiped by the next rerender, which is intended: they exist only to find out
+    # which CPU emits the AVX10 warning on conda-forge's runners.
+    - name: Mount CVMFS (debug)
+      if: matrix.os == 'ubuntu'
+      continue-on-error: true
+      uses: cvmfs-contrib/github-action-cvmfs@v5.6
+      with:
+        cvmfs_repositories: sft.cern.ch
+    - uses: prefix-dev/setup-pixi@v0.10.2
+      if: matrix.os == 'ubuntu'
+      continue-on-error: true
+      with:
+        run-install: false
+    - name: Probe Cling AVX10 warning (debug)
+      if: matrix.os == 'ubuntu'
+      continue-on-error: true
+      env:
+        CONFIG: ${{ matrix.CONFIG }}
+      shell: bash
+      run: bash debug-probe.sh
+    # <<< TEMPORARY DEBUG
+
     - name: Build on Linux
       id: build-linux
       if: matrix.os == 'ubuntu'
