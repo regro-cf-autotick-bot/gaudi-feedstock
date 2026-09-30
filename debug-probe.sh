@@ -31,76 +31,27 @@ echo "### CPU"
 echo "model:    ${model}"
 echo "archspec: ${arch}"
 
-# The decisive measurement. A Granite Rapids runner swept clang 18.1.8, 20.1.8
-# and 20.1.8 clean, so the CPU model is not the discriminator: real GNR reports
-# leaf 0x24 EBX bit 18 set, which makes both avx10 features come out true even
-# pre-fix. The warning needs version >= 1 with bit 18 clear, which real silicon
-# does not do - so this dumps the raw registers to test whether the affected
-# runners are virtualised behind an incomplete leaf 0x24. Unlike a reproduction
-# attempt this is informative on every runner, warning or not.
+# Run the full avx10 collector: CPUID at -O0 and -O2, LLVM 20's own
+# getHostCPUFeatures() as ground truth rather than a reimplementation, and a
+# real Cling process. Reuses the jobs this PR already runs so it costs
+# conda-forge no extra CI beyond what was running anyway.
+#
+# Why here as well as on the fork: the original 201-warning job was on
+# conda-forge's runners, and conda-forge may draw from a different pool than a
+# personal repository does.
 echo
-echo "### CPUID (what LLVM getHostCPUFeatures reads)"
+echo "### avx10 collector"
+OUT=avx10-artifacts bash avx10/collect.sh || echo "collector returned non-zero"
 would_warn=0
-if gcc -O0 -o /tmp/cpuid-probe cpuid-probe.c 2>/dev/null; then
-    /tmp/cpuid-probe | tee /tmp/cpuid.txt
-    would_warn=$(sed -n 's/.*would_warn=\([01]\).*/\1/p' /tmp/cpuid.txt | tail -1)
-    would_warn=${would_warn:-0}
-else
-    echo "  (failed to compile cpuid-probe.c)"
-fi
-echo "CPUIDVERDICT cpu=${model} arch=${arch} $(grep -h '^VERDICT' /tmp/cpuid.txt 2>/dev/null | sed 's/^VERDICT //')"
+if grep -aq 'warn_pre=1' avx10-artifacts/cpuid.txt 2>/dev/null; then would_warn=1; fi
+cling_hit=no
+if grep -aq "invalid feature combination" avx10-artifacts/root-stderr.txt 2>/dev/null; then cling_hit=yes; fi
+echo "AVX10SUMMARY cpu=${model} arch=${arch} would_warn=${would_warn} cling_hit=${cling_hit}"
 
-# NB the dash goes last in the tr set, otherwise it reads as a character range
-cxx=$(grep -A1 '^root_cxx_standard:' ".ci_support/${CONFIG}.yaml" | tail -1 | tr -d " '\"-")
-
-# every root_base this feedstock builds against, normalised to the package's
-# zero padded patch (the variant files write 6.40.4 where the package is 6.40.04)
-mapfile -t versions < <(
-  for f in .ci_support/linux_64*.yaml; do
-    grep -A1 '^root_base:' "$f" | tail -1 | tr -d " '\"-"
-  done | sort -u | while read -r v; do
-    python3 -c 'import sys;a=sys.argv[1].split(".");print("%s.%s.%02d"%(a[0],a[1],int(a[2])))' "$v"
-  done
-)
-
-probe_body='
-  err=$(mktemp)
-  echo "  ROOT:  $(root-config --version 2>/dev/null || echo ?)"
-  echo "  clang: $(root -l -b -q -e "std::cout << __clang_version__ << std::endl;" 2>/dev/null | tail -1 | cut -d" " -f1)"
-  root -l -b -q -e "return 0;" 2>"$err" >/dev/null
-  rc=$?
-  echo "  stderr bytes: $(wc -c <"$err")"
-  [ -s "$err" ] && { echo "  --- stderr ---"; sed "s/^/  /" "$err"; }
-  if grep -q "invalid feature combination" "$err"; then echo "RESULT hit"
-  elif [ $rc -ne 0 ]; then echo "RESULT error"
-  elif [ -s "$err" ]; then echo "RESULT other-stderr"
-  else echo "RESULT clean"; fi
-'
-
-reproduced=no
-row="| \`${arch}\` | ${model} |"
-for v in "${versions[@]}"; do
-    echo
-    echo "### root_base ${v} (cxx${cxx})"
-    # capture to a file rather than `tee /dev/stderr`: command substitution
-    # reads stdout through a pipe while stderr writes to the log with its own
-    # offset, and the two clobber each other with NUL padding
-    out=$(mktemp)
-    pixi exec --spec "root_base==${v}" --spec "root_cxx_standard==${cxx}" \
-        bash -c "$probe_body" >"$out" 2>&1
-    cat "$out"
-    res=$(sed -n 's/^RESULT //p' "$out" | tail -1)
-    res=${res:-did-not-run}
-    echo "  => ${v}: ${res}"
-    row+=" **${res}** |"
-    [ "$res" = "hit" ] && reproduced=yes
-    echo "SWEEP cpu=${model} arch=${arch} root_base=${v} cxx=${cxx} result=${res}"
-done
-
-echo "$row" >> "$summary"
-
-if [ "$reproduced" = yes ] || [ "$would_warn" = 1 ]; then
-    echo "FOUND IT on ${model} (root_base hit=${reproduced}, cpuid would_warn=${would_warn})"
+if [ "$cling_hit" = yes ] || [ "$would_warn" = 1 ]; then
+    # exit 0 so the job goes on to build Gaudi and run its full suite on this
+    # same machine - a hit whose job stopped here would be wasted
+    echo "FOUND IT on ${model} (cling_hit=${cling_hit}, cpuid would_warn=${would_warn})"
     exit 0
 fi
 echo "Nothing interesting on ${model} - failing so a rerun re-rolls the runner."

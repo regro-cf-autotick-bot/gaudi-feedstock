@@ -414,6 +414,15 @@ jobs:
         CONFIG: ${{ matrix.CONFIG }}
       shell: bash
       run: bash debug-probe.sh
+    # artifacts rather than log scraping: logs expire and truncate, and on a hit
+    # this is the evidence
+    - name: Upload probe artifacts (debug)
+      if: always() && matrix.os == 'ubuntu'
+      uses: actions/upload-artifact@v4
+      with:
+        name: avx10-${{ matrix.CONFIG }}
+        path: avx10-artifacts/
+        if-no-files-found: warn
     # <<< TEMPORARY DEBUG
 
     - name: Build on Linux
