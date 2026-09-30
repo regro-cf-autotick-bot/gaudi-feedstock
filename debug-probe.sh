@@ -1,99 +1,77 @@
 #!/bin/bash
-# TEMPORARY DEBUG - remove before merging.
+# TEMPORARY DEBUG - remove before merging. See root-project/root#23542.
 #
-# Identifies the runner CPU and checks whether Cling emits the AVX10 feature
-# warning, once against conda-forge's root_base and once against an LCG view
-# over CVMFS, on the same machine. conda-forge's CI reproduces the warning where
-# a personal repository's runners never did (86 samples, no CPU even advertising
-# avx10), so the point of running here is to find out which CPU it actually is.
+# The warning needs two things in the same job: root_base 6.36.x, which bundles
+# clang 18.1.8, and a particular CPU. 6.38/6.40 bundle clang 20.1.8 and have
+# never warned. archspec cannot tell the CPUs apart - it labels both Emerald
+# Rapids (8573C, clean) and Granite Rapids (6973P-C, warns) as sapphirerapids.
 #
-# See root-project/root#23542.
+# So this pins ROOT to the variant the job actually builds, which an earlier
+# version of this script did not: it took whatever `pixi exec --spec root_base`
+# resolved to, i.e. 6.40.04 in every job, and therefore could not reproduce the
+# warning on any hardware.
 #
-# Nothing is injected: no EXTRA_CLING_ARGS, no -march, no -m flags. Any warning
-# reported below comes from Cling's own host CPU detection.
+# Exits non-zero unless it reproduces, so a job on uninteresting hardware fails
+# in a minute or two instead of building for twenty. `gh run rerun --failed`
+# then re-rolls those jobs onto different runners.
+#
+# Nothing is injected: no EXTRA_CLING_ARGS, no -march, no -m flags.
 set -uo pipefail
 
-LCG_VIEW="${LCG_VIEW:-/cvmfs/sft.cern.ch/lcg/views/LCG_110a/x86_64-el9-gcc15-opt/setup.sh}"
 summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+CONFIG="${CONFIG:?CONFIG must be set}"
+variant=".ci_support/${CONFIG}.yaml"
 
 model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)
-avx10=$(grep -oE 'avx10[^ ]*' /proc/cpuinfo | sort -u | paste -sd, -)
-avx512=$(grep -m1 -oE 'avx512f' /proc/cpuinfo || true)
 arch=$(pixi exec --spec archspec archspec cpu 2>/dev/null || echo unknown)
+avx10=$(grep -oE 'avx10[^ ]*' /proc/cpuinfo | sort -u | paste -sd, -)
 
 echo "### CPU"
 echo "model:    ${model}"
 echo "archspec: ${arch}"
-echo "avx10:    ${avx10:-none}"
-echo "avx512f:  ${avx512:-none}"
+echo "avx10:    ${avx10:-none}   (absent is expected: the LLVM bug mis-reads CPUID)"
+
+# Take the pins from the variant file rather than parsing CONFIG. The variant
+# writes the patch unpadded (6.40.4) where the package is zero padded (6.40.04),
+# so normalise before handing it to the solver.
+# NB the dash goes last in the tr set, otherwise it reads as a character range
+rb_raw=$(grep -A1 '^root_base:' "$variant" | tail -1 | tr -d " '\"-")
+cxx=$(grep -A1 '^root_cxx_standard:' "$variant" | tail -1 | tr -d " '\"-")
+rb=$(python3 -c 'import sys;a=sys.argv[1].split(".");print("%s.%s.%02d"%(a[0],a[1],int(a[2])))' "$rb_raw" 2>/dev/null || echo "$rb_raw")
+
 echo
-echo "### full flags"
-grep -m1 '^flags' /proc/cpuinfo | cut -d: -f2- | tr ' ' '\n' | grep -E '^avx' | paste -sd, -
+echo "### variant"
+echo "root_base:         ${rb_raw} -> ${rb}"
+echo "root_cxx_standard: ${cxx}"
 
-# Prints a RESULT marker for every outcome, so a probe whose environment is
-# broken is visible as such rather than counting as evidence the CPU is clean.
-run_probe() {
-    local label="$1" err
-    err=$(mktemp)
-    echo "### ${label}"
-    echo "root:             $(command -v root || echo '<not found>')"
-    echo "ROOT version:     $(root-config --version 2>/dev/null || echo '?')"
-    echo "EXTRA_CLING_ARGS: ${EXTRA_CLING_ARGS-<unset>}"
-    root -l -b -q -e 'return 0;' 2>"$err" >/dev/null
-    local rc=$?
-    echo "exit code:        ${rc}"
-    echo "stderr bytes:     $(wc -c <"$err")"
-    echo "--- begin stderr ---"
-    cat "$err"
-    echo "--- end stderr ---"
-    if grep -q "invalid feature combination" "$err"; then
-        echo "RESULT ${label} hit"
-    elif [[ $rc -ne 0 ]]; then
-        echo "RESULT ${label} error"
-    elif [[ -s "$err" ]]; then
-        echo "RESULT ${label} other-stderr"
-    else
-        echo "RESULT ${label} clean"
-    fi
-}
+probe_body='
+  err=$(mktemp)
+  echo "root:             $(command -v root || echo none)"
+  echo "ROOT version:     $(root-config --version 2>/dev/null || echo ?)"
+  echo "clang:            $(root -l -b -q -e "std::cout << __clang_version__ << std::endl;" 2>/dev/null | tail -1)"
+  echo "EXTRA_CLING_ARGS: ${EXTRA_CLING_ARGS-<unset>}"
+  root -l -b -q -e "return 0;" 2>"$err" >/dev/null
+  rc=$?
+  echo "exit code:        $rc"
+  echo "stderr bytes:     $(wc -c <"$err")"
+  echo "--- begin stderr ---"; cat "$err"; echo "--- end stderr ---"
+  if grep -q "invalid feature combination" "$err"; then echo "RESULT hit"
+  elif [ $rc -ne 0 ]; then echo "RESULT error"
+  elif [ -s "$err" ]; then echo "RESULT other-stderr"
+  else echo "RESULT clean"; fi
+'
 
-if [[ "${1:-}" == "--in-container" ]]; then
-    run_probe lcg
+echo
+echo "### conda-forge (pinned to this job's variant)"
+res=$(pixi exec --spec "root_base==${rb}" --spec "root_cxx_standard==${cxx}" \
+        bash -c "$probe_body" 2>&1 | tee /dev/stderr | sed -n 's/^RESULT //p' | tail -1)
+
+echo "| \`${CONFIG}\` | \`${arch}\` | ${model} | ${rb} | **${res:-did-not-run}** |" >> "$summary"
+echo "SUMMARY config=${CONFIG} arch=${arch} cpu=${model} root_base=${rb} result=${res:-did-not-run}"
+
+if [[ "$res" == "hit" ]]; then
+    echo "REPRODUCED on ${model} with root_base ${rb}"
     exit 0
 fi
-
-# --- conda-forge -----------------------------------------------------------
-conda_res=$(pixi exec --spec root_base bash -c "
-    $(declare -f run_probe)
-    run_probe conda-forge
-" 2>&1 | tee /dev/stderr | sed -n 's/^RESULT conda-forge //p' | tail -1)
-
-# --- LCG view over CVMFS ---------------------------------------------------
-# The view is built for EL9 so it cannot run on the Ubuntu runner directly.
-# /cvmfs is an autofs mount and the automounter does not follow into a
-# container's namespace, so the already-mounted repository is bind mounted
-# rather than /cvmfs itself. LCG views also need HEP_OSlibs, whose -devel
-# dependencies live in CRB, which AlmaLinux ships disabled.
-lcg_res=did-not-run
-if [[ -e "$LCG_VIEW" ]]; then
-    lcg_res=$(docker run --rm \
-        -v /cvmfs/sft.cern.ch:/cvmfs/sft.cern.ch:ro \
-        -v "$PWD:/work:ro" \
-        -e LCG_VIEW="$LCG_VIEW" \
-        almalinux:9 bash -c '
-            set -e
-            dnf install -y -q epel-release
-            dnf install -y -q https://linuxsoft.cern.ch/wlcg/el9/x86_64/wlcg-repo-1.0.0-1.el9.noarch.rpm
-            dnf install -y -q --enablerepo=crb HEP_OSlibs
-            source "$LCG_VIEW"
-            bash /work/debug-probe.sh --in-container
-        ' 2>&1 | tee /dev/stderr | sed -n 's/^RESULT lcg //p' | tail -1)
-else
-    echo "LCG view not visible on host: $LCG_VIEW"
-fi
-
-{
-    echo "| \`${CONFIG:-?}\` | \`${arch}\` | ${model} | ${avx10:-none} | ${avx512:-none} | **${conda_res:-did-not-run}** | **${lcg_res:-did-not-run}** |"
-} >> "$summary"
-
-echo "SUMMARY conda-forge=${conda_res:-did-not-run} lcg=${lcg_res:-did-not-run} arch=${arch} cpu=${model}"
+echo "Not reproduced on ${model} with root_base ${rb} - failing so a rerun re-rolls the runner."
+exit 1
