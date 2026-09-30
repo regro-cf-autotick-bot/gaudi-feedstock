@@ -48,11 +48,19 @@ cling_hit=no
 if grep -aq "invalid feature combination" avx10-artifacts/root-stderr.txt 2>/dev/null; then cling_hit=yes; fi
 echo "AVX10SUMMARY cpu=${model} arch=${arch} would_warn=${would_warn} cling_hit=${cling_hit}"
 
-if [ "$cling_hit" = yes ] || [ "$would_warn" = 1 ]; then
-    # exit 0 so the job goes on to build Gaudi and run its full suite on this
-    # same machine - a hit whose job stopped here would be wasted
-    echo "FOUND IT on ${model} (cling_hit=${cling_hit}, cpuid would_warn=${would_warn})"
+# Also proceed on any CPU that merely *has* leaf 0x24, not only on a hit.
+# The probe runs `root -l -b -q -e 'return 0;'`, which JITs almost nothing,
+# whereas the 201 warnings came from a full Gaudi suite exercising Cling hard.
+# So a Granite Rapids runner could be clean here and still warn under real
+# load - the only way to know is to run the build and the whole test suite on
+# one of these machines.
+leaf24=0
+grep -aq 'leaf24=1' avx10-artifacts/cpuid.txt 2>/dev/null && leaf24=1
+
+if [ "$cling_hit" = yes ] || [ "$would_warn" = 1 ] || [ "$leaf24" = 1 ]; then
+    echo "PROCEEDING on ${model} (cling_hit=${cling_hit}, would_warn=${would_warn}, leaf24=${leaf24})"
+    echo "  -> building Gaudi and running the full test suite on this machine"
     exit 0
 fi
-echo "Nothing interesting on ${model} - failing so a rerun re-rolls the runner."
+echo "No leaf 0x24 on ${model} - cannot be affected; failing so a rerun re-rolls the runner."
 exit 1

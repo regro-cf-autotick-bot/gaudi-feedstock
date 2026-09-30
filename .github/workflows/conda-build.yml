@@ -457,6 +457,18 @@ jobs:
         fi
         ./.scripts/run_docker_build.sh
 
+    # On a leaf 0x24 machine the build ran, so keep its log - the complete
+    # warning count and failing-test list is the point, not the first failure.
+    - name: Upload Gaudi build log (debug)
+      if: always() && matrix.os == 'ubuntu' && steps.probe.outcome == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: gaudi-build-${{ matrix.CONFIG }}
+        path: |
+          avx10-artifacts/
+          build_artifacts/**/*.log
+        if-no-files-found: warn
+
     - name: Build on macOS
       id: build-macos
       if: matrix.os == 'macos'
