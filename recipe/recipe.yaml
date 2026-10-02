@@ -27,7 +27,7 @@ source:
     - patches/0002-fix-drop-removed-startdir-arg-from-pytest_report_hea.patch
 
 build:
-  number: 0
+  number: 1
   skip:
     - win
     # Skip macOS for now due to lack of upstream support
